@@ -24,6 +24,9 @@
   <!-- 3D 캔버스는 JS에서 생성하여 #app에 붙임 -->
   <div id="app"></div>
 
+  <!-- 구역(테마) 색감 틴트 (카메라 위, HUD 아래) -->
+  <div id="map-tint"></div>
+
   <!-- 화면 흔들림(셰이크)을 위한 뷰포트 래퍼 표시는 #camera/#app에 직접 적용 -->
 
   <!-- HUD -->
@@ -50,6 +53,12 @@
 
     <!-- 화면 밖 위협 방향 표시기 -->
     <div id="indicators"></div>
+
+    <!-- 보스 HP 바 -->
+    <div id="boss-bar" class="hidden">
+      <span class="boss-label">⚠ BOSS</span>
+      <div class="boss-fill-wrap"><div id="boss-fill"></div></div>
+    </div>
 
     <!-- 조준선 -->
     <div id="crosshair">
@@ -88,6 +97,11 @@
 
     <button id="fire-btn" aria-label="발사">발사</button>
     <button id="reload-btn" aria-label="재장전">⟳</button>
+    <button id="ult-btn" aria-label="궁극기"><span>⚡</span></button>
+    <button id="weapon-btn" aria-label="무기 교체"></button>
+
+    <!-- 궁극기 발동 화면 플래시 -->
+    <div id="ult-flash"></div>
   </div>
 
   <!-- 시작 화면 -->
@@ -98,9 +112,10 @@
       <ul class="howto">
         <li>📷 카메라 영상이 배경이 됩니다</li>
         <li>📱 휴대폰을 움직여(또는 마우스로) 조준</li>
-        <li>🎯 화면을 탭/클릭해서 발사</li>
-        <li>👾 정찰·돌격·포탑 드론을 막아내세요</li>
-        <li>⚡ 콤보를 이어 점수 배율을 올리세요</li>
+        <li>🎯 화면 탭/클릭 발사 · 약점(코어) 명중 = 치명타</li>
+        <li>🔫 무기 3종 교체(권총·산탄총·기관단총) · ⚡궁극기</li>
+        <li>👾 정찰·돌격·포탑·분열체·방패병 + 정예/보스</li>
+        <li>🏆 5웨이브마다 보스 · 웨이브 사이 강화 선택</li>
       </ul>
       <div class="aim-select">
         <span class="aim-label">조준 방식</span>
@@ -108,10 +123,30 @@
           <button data-mode="gyro">자이로<small>기기 기울여</small></button>
           <button data-mode="touch">터치<small>드래그</small></button>
         </div>
+        <div class="gain-row">
+          <span class="aim-label">자이로 감도</span>
+          <div class="gain-seg">
+            <button data-gain="1">1x</button>
+            <button data-gain="1.5">1.5x</button>
+            <button data-gain="2">2x</button>
+          </div>
+        </div>
+        <div class="gain-row">
+          <span class="aim-label">배경</span>
+          <div class="bg-seg">
+            <button data-bg="ar">AR<small>카메라</small></button>
+            <button data-bg="arena">아레나<small>3D 환경</small></button>
+          </div>
+        </div>
       </div>
       <div class="highscore-line">최고 점수 <span id="hi-start">0</span></div>
+      <div class="lb-title">🏆 랭킹 Top 5</div>
+      <ol id="lb-start" class="lb-list"></ol>
       <button id="start-btn">게임 시작</button>
-      <button class="mute-btn panel-mute" aria-label="음소거">🔊</button>
+      <div class="panel-row">
+        <button class="mute-btn panel-icon" aria-label="음소거">🔊</button>
+        <button class="fs-btn panel-icon" aria-label="전체화면">⛶</button>
+      </div>
       <p id="permission-note"></p>
     </div>
   </div>
@@ -126,11 +161,29 @@
           <button data-mode="gyro">자이로<small>기기 기울여</small></button>
           <button data-mode="touch">터치<small>드래그</small></button>
         </div>
+        <div class="gain-row">
+          <span class="aim-label">자이로 감도</span>
+          <div class="gain-seg">
+            <button data-gain="1">1x</button>
+            <button data-gain="1.5">1.5x</button>
+            <button data-gain="2">2x</button>
+          </div>
+        </div>
       </div>
       <button id="recalib-btn2" class="recalib ghost">🧭 정면 보정</button>
+      <button class="fs-btn ghost" aria-label="전체화면">⛶ 전체화면</button>
       <button class="mute-btn ghost" aria-label="음소거">🔊 소리</button>
       <button id="resume-btn">계속하기</button>
       <button id="quit-btn" class="ghost">그만두기</button>
+    </div>
+  </div>
+
+  <!-- 강화 선택 화면 (웨이브 사이) -->
+  <div id="upgrade-screen" class="hidden">
+    <div class="panel">
+      <h1 class="up-title">강화 선택</h1>
+      <p class="up-sub">하나를 골라 다음 웨이브로</p>
+      <div id="upgrade-cards"></div>
     </div>
   </div>
 
@@ -144,7 +197,17 @@
         <div><span id="final-wave">1</span><small>웨이브</small></div>
         <div><span id="final-kills">0</span><small>처치</small></div>
       </div>
+      <div class="final-extra">명중률 <span id="final-acc">0%</span> · 최대 콤보 <span id="final-combo">0</span></div>
       <div class="highscore-line">최고 점수 <span id="hi-over">0</span></div>
+
+      <!-- 랭킹 등록 -->
+      <div id="lb-register" class="hidden">
+        <input id="lb-name" maxlength="8" placeholder="이름 입력" autocomplete="off" />
+        <button id="lb-submit">랭킹 등록</button>
+      </div>
+      <div class="lb-title" id="lb-title-main">🏆 랭킹 Top 10 (로컬)</div>
+      <ol id="lb-list" class="lb-list"></ol>
+
       <button id="restart-btn">다시 도전</button>
     </div>
   </div>
