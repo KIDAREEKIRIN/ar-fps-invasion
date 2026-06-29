@@ -113,6 +113,7 @@ const game = {
   boss: null,
   theme: -1,
   arena: false,
+  bgMode: "ar",   // 'ar' | 'arena' | 'xr'
 };
 
 // 무기 3종 — 발사간격/탄창/펠릿/탄퍼짐/연사 여부로 차별화
@@ -123,7 +124,8 @@ const WEAPONS = [
 ];
 
 // ---------- Three.js ----------
-let renderer, scene, camera, raycaster;
+let renderer, scene, camera, raycaster, activeCamera;
+let xrSupported = false, xrPresenting = false, xrSession = null;
 let ambLight, dirLight, ambientMotes, mapTintEl, arenaGrid, skyMesh;
 let enemyGlow = 1.5; // 구역별 적 발광(대비) 기준값
 const clock = new THREE.Clock();
@@ -134,6 +136,19 @@ const _proj = new THREE.Vector3();
 const playerPos = new THREE.Vector3(0, 0, 0);
 const centerVec = new THREE.Vector2(0, 0);
 const _aim = new THREE.Vector2();
+// 카메라 월드 위치+방향 기반 조준 레이 (WebXR/비-XR 공통). nx,ny=탄퍼짐 오프셋
+const _camPos = new THREE.Vector3();
+const _camQuat = new THREE.Quaternion();
+const _rayLocal = new THREE.Vector3();
+const _rayDir = new THREE.Vector3();
+function aimRay(nx, ny) {
+  const cam = activeCamera || camera;
+  cam.getWorldPosition(_camPos);
+  cam.getWorldQuaternion(_camQuat);
+  _rayLocal.set(nx, ny, -1).normalize();
+  _rayDir.copy(_rayLocal).applyQuaternion(_camQuat).normalize();
+  raycaster.set(_camPos, _rayDir);
+}
 
 // 공유 지오메트리 (적 외형은 공유, 색/스케일만 변경)
 let SHARED;
@@ -149,6 +164,7 @@ function initThree() {
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 100);
   camera.position.set(0, 0, 0);
+  activeCamera = camera;
 
   ambLight = new THREE.AmbientLight(0xffffff, 0.7);
   scene.add(ambLight);
@@ -229,7 +245,7 @@ function applyTheme(i) {
 }
 
 function onResize() {
-  if (!renderer) return;
+  if (!renderer || xrPresenting) return; // XR은 세션이 크기 관리
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -531,7 +547,7 @@ function loadMute() { setMute(localStorage.getItem(MUTE_KEY) === "1"); }
    유틸: 좌표 투영 / 팝업 / 스크린 셰이크
    ========================================================= */
 function worldToScreen(v3) {
-  _proj.copy(v3).project(camera);
+  _proj.copy(v3).project(activeCamera || camera);
   return {
     x: (_proj.x * 0.5 + 0.5) * window.innerWidth,
     y: (-_proj.y * 0.5 + 0.5) * window.innerHeight,
@@ -580,16 +596,17 @@ function initIndicators() {
 }
 function hideIndicators() { indicatorEls.forEach((el) => el.classList.add("hidden")); }
 function updateIndicators() {
+  const cam = activeCamera || camera;
   const offs = [];
   for (let i = 0; i < enemies.length; i++) {
     const en = enemies[i];
     if (!en.alive) continue;
     // 카메라 공간 z<0 = 정면. 정면일 때만 NDC로 화면 안 판정 (뒤쪽은 project()가 오판정함)
-    _cs.copy(en.group.position).applyMatrix4(camera.matrixWorldInverse);
+    _cs.copy(en.group.position).applyMatrix4(cam.matrixWorldInverse);
     const inFront = _cs.z < 0;
     let onScreen = false;
     if (inFront) {
-      _ind.copy(en.group.position).project(camera);
+      _ind.copy(en.group.position).project(cam);
       onScreen = Math.abs(_ind.x) <= 1 && Math.abs(_ind.y) <= 1;
     }
     if (onScreen) continue;
@@ -602,7 +619,7 @@ function updateIndicators() {
     const el = indicatorEls[i];
     if (i < offs.length) {
       const en = offs[i].en;
-      _cs.copy(en.group.position).applyMatrix4(camera.matrixWorldInverse);
+      _cs.copy(en.group.position).applyMatrix4(cam.matrixWorldInverse);
       if (!offs[i].front) { _cs.x = -_cs.x; _cs.y = -_cs.y; } // 뒤쪽이면 반전
       const ang = Math.atan2(_cs.x, _cs.y);
       const ix = cx + Math.sin(ang) * r, iy = cy - Math.cos(ang) * r;
@@ -674,11 +691,11 @@ function spawnEnemy(typeKey, atPos) {
   } else {
     const yaw = Math.random() * Math.PI * 2;
     const pitch = (Math.random() - 0.35) * 0.7;
-    const radius = 11 + Math.random() * 6;
+    const radius = xrPresenting ? (5 + Math.random() * 4) : (11 + Math.random() * 6); // XR은 방 규모로 가까이
     en.group.position.set(
-      Math.sin(yaw) * Math.cos(pitch) * radius,
-      Math.sin(pitch) * radius,
-      -Math.cos(yaw) * Math.cos(pitch) * radius
+      playerPos.x + Math.sin(yaw) * Math.cos(pitch) * radius,
+      playerPos.y + Math.sin(pitch) * radius,
+      playerPos.z - Math.cos(yaw) * Math.cos(pitch) * radius
     );
   }
   scene.add(en.group);
@@ -865,8 +882,7 @@ function fire() {
 }
 // 한 발(탄)의 레이캐스트 + 관통(pierce) 처리. 탄환은 통과하며 요격. 명중률 통계 집계.
 function castShot(nx, ny) {
-  _aim.set(nx, ny);
-  raycaster.setFromCamera(_aim, camera);
+  aimRay(nx, ny);
   const hits = raycaster.intersectObjects(targets, false);
   let enemiesHit = 0, connected = false;
   for (let h = 0; h < hits.length; h++) {
@@ -1169,7 +1185,8 @@ function updatePerf(dt) {
     perf.fps = Math.round(perf.frames / perf.acc);
     ui.fps.textContent = perf.fps + " FPS";
     perf.acc = 0; perf.frames = 0;
-    // 적응형: 30fps 미만이면 해상도 ↓, 안정적이면 ↑
+    // 적응형: 30fps 미만이면 해상도 ↓, 안정적이면 ↑ (XR은 세션이 관리하므로 제외)
+    if (xrPresenting) return;
     if (perf.fps < 40 && perf.pr > 1) {
       perf.pr = Math.max(1, perf.pr - 0.25); renderer.setPixelRatio(perf.pr);
     } else if (perf.fps > 56 && perf.pr < Math.min(window.devicePixelRatio, 2)) {
@@ -1188,7 +1205,8 @@ function update(dt) {
   if (ambientMotes) ambientMotes.rotation.y += dt * 0.03; // 부유 파티클 드리프트
 
   if (game.state === State.PLAYING) {
-    updateCameraFromControls();
+    if (!xrPresenting) updateCameraFromControls();   // XR은 기기 6DOF가 카메라를 구동
+    (activeCamera || camera).getWorldPosition(playerPos); // 플레이어 위치 = 카메라(머리) 월드 위치
     updateWaves(dt);
     updatePerf(dt);
 
@@ -1284,7 +1302,7 @@ function update(dt) {
     }
 
     // 조준 락온 표시 + 화면 밖 위협 표시기
-    raycaster.setFromCamera(centerVec, camera);
+    aimRay(0, 0);
     const aim = raycaster.intersectObjects(targets, false);
     ui.crosshair.classList.toggle("locked", aim.length > 0 && aim[0].object.userData.kind === "enemy");
     updateIndicators();
@@ -1292,8 +1310,9 @@ function update(dt) {
 
   updateParticles(dt);
 }
-function animate() {
-  requestAnimationFrame(animate);
+function loop() {
+  // XR 세션 중이면 기기가 구동하는 카메라를, 아니면 일반 카메라를 사용
+  activeCamera = (renderer.xr && renderer.xr.isPresenting) ? renderer.xr.getCamera() : camera;
   const dt = Math.min(clock.getDelta(), 0.05);
   update(dt);
   if (renderer) renderer.render(scene, camera);
@@ -1415,13 +1434,27 @@ function renderStartLeaderboard() {
   el.innerHTML = list.length ? lbRowsHtml(list, -1) : '<li class="lb-empty">아직 기록이 없습니다</li>';
 }
 
-// 비-AR 아레나 모드 토글
-function setArenaMode(v) {
-  game.arena = v;
-  try { localStorage.setItem(ARENA_KEY, v ? "1" : "0"); } catch (e) {}
-  document.querySelectorAll(".bg-seg button").forEach((b) => b.classList.toggle("active", (b.dataset.bg === "arena") === v));
+// 배경 모드: AR(카메라) / 아레나(3D) / XR(진짜 AR·안드로이드)
+function setBgMode(mode) {
+  if (mode === "xr" && !xrSupported) mode = "ar"; // 미지원 기기는 AR 폴백
+  game.bgMode = mode;
+  game.arena = mode === "arena";
+  try { localStorage.setItem(ARENA_KEY, mode); } catch (e) {}
+  document.querySelectorAll(".bg-seg button").forEach((b) => b.classList.toggle("active", b.dataset.bg === mode));
 }
-function loadArenaMode() { setArenaMode(localStorage.getItem(ARENA_KEY) === "1"); }
+function loadBgMode() {
+  let v = localStorage.getItem(ARENA_KEY);
+  if (v === "1") v = "arena"; else if (v === "0") v = "ar"; // 구버전 값 마이그레이션
+  setBgMode(v === "arena" || v === "xr" ? v : "ar");
+}
+// WebXR(immersive-ar) 지원 감지 → 지원 시 'xr' 옵션 노출
+async function detectXR() {
+  try {
+    if (navigator.xr && navigator.xr.isSessionSupported) xrSupported = await navigator.xr.isSessionSupported("immersive-ar");
+  } catch (e) { xrSupported = false; }
+  document.querySelectorAll('.bg-seg button[data-bg="xr"]').forEach((b) => b.classList.toggle("hidden", !xrSupported));
+  if (!xrSupported && game.bgMode === "xr") setBgMode("ar");
+}
 
 /* =========================================================
    로그라이트 강화 (웨이브 사이 선택)
@@ -1526,7 +1559,22 @@ function toggleFullscreen() {
     }
   } catch (e) {}
 }
+// 공통: 화면 전환 + 1웨이브 시작
+function beginPlay() {
+  resetGame();
+  startScreen.classList.add("hidden");
+  pauseScreen.classList.add("hidden");
+  gameoverScreen.classList.add("hidden");
+  hudEl.classList.remove("hidden");
+  game.state = State.PLAYING;
+  clock.getDelta();
+  refreshControlsUI();
+  if (!xrPresenting && controls.preferred === "gyro" && controls.hasOrientation) recalibrate(true);
+  startMusic();
+  startWave(1);
+}
 async function startGame() {
+  if (game.bgMode === "xr" && xrSupported) return startXR();
   initAudio();
   if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
   $("start-btn").disabled = true;
@@ -1541,17 +1589,49 @@ async function startGame() {
     permNote.classList.remove("error");
     await startCamera();
   }
-  resetGame();
-  startScreen.classList.add("hidden");
-  pauseScreen.classList.add("hidden");
-  gameoverScreen.classList.add("hidden");
-  hudEl.classList.remove("hidden");
-  game.state = State.PLAYING;
-  clock.getDelta(); // 누적 dt 리셋
+  beginPlay();
+}
+// WebXR 진짜 AR (안드로이드). 세션 시작 후 6DOF로 플레이.
+async function startXR() {
+  initAudio();
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+  if (xrPresenting) { beginPlay(); return; } // 이미 세션 중이면 게임만 재시작
+  $("start-btn").disabled = true;
+  try {
+    const session = await navigator.xr.requestSession("immersive-ar", { optionalFeatures: ["local-floor", "dom-overlay"], domOverlay: { root: document.body } });
+    xrSession = session;
+    renderer.xr.enabled = true;
+    try { renderer.xr.setReferenceSpaceType("local-floor"); } catch (e) {}
+    await renderer.xr.setSession(session);
+    session.addEventListener("end", onXREnd);
+    xrPresenting = true;
+    // 카메라 패스스루가 배경 → 3D 배경 요소 끔
+    game.arena = false;
+    if (videoEl.srcObject) { videoEl.srcObject.getTracks().forEach((t) => t.stop()); videoEl.srcObject = null; }
+    videoEl.style.display = "none";
+    scene.background = null;
+    if (skyMesh) skyMesh.visible = false;
+    if (arenaGrid) { scene.remove(arenaGrid); arenaGrid = null; }
+    if (mapTintEl) mapTintEl.style.backgroundColor = "rgba(0,0,0,0)";
+    beginPlay();
+  } catch (e) {
+    permNote.textContent = "AR 세션을 시작할 수 없습니다: " + (e.name || e.message || e);
+    permNote.classList.add("error");
+  } finally {
+    $("start-btn").disabled = false;
+  }
+}
+function onXREnd() {
+  xrPresenting = false; xrSession = null;
+  try { renderer.xr.enabled = false; } catch (e) {}
+  videoEl.style.display = "";
+  game.firing = false; game.boss = null; hideBossBar(); stopMusic();
+  game.state = State.MENU;
+  hudEl.classList.add("hidden"); pauseScreen.classList.add("hidden"); upgradeScreen.classList.add("hidden"); gameoverScreen.classList.add("hidden");
+  loadHighscore(); renderStartLeaderboard();
+  startScreen.classList.remove("hidden");
+  onResize(); // 비-XR 렌더 크기 복구
   refreshControlsUI();
-  if (controls.preferred === "gyro" && controls.hasOrientation) recalibrate(true); // 시작 시 정면 보정
-  startMusic();
-  startWave(1);
 }
 function pauseGame() {
   if (game.state !== State.PLAYING) return;
@@ -1571,6 +1651,7 @@ function resumeGame() {
   refreshControlsUI();
 }
 function quitToMenu() {
+  if (xrPresenting && xrSession) { try { xrSession.end(); } catch (e) {} return; } // onXREnd가 메뉴 처리
   game.state = State.MENU;
   game.firing = false;
   pauseScreen.classList.add("hidden");
@@ -1667,9 +1748,9 @@ function bindUI() {
   document.querySelectorAll(".gain-seg button").forEach((b) => {
     b.addEventListener("click", (e) => { e.stopPropagation(); setGyroGain(parseFloat(b.dataset.gain)); });
   });
-  // 배경 모드 (AR / 아레나)
+  // 배경 모드 (AR / 아레나 / XR)
   document.querySelectorAll(".bg-seg button").forEach((b) => {
-    b.addEventListener("click", (e) => { e.stopPropagation(); setArenaMode(b.dataset.bg === "arena"); });
+    b.addEventListener("click", (e) => { e.stopPropagation(); setBgMode(b.dataset.bg); });
   });
   // 전체화면 토글 (권한과 분리된 별도 버튼)
   document.querySelectorAll(".fs-btn").forEach((b) => {
@@ -1702,7 +1783,8 @@ bindUI();
 loadHighscore();
 loadAimMode();
 loadGyroGain();
-loadArenaMode();
+loadBgMode();
 loadMute();
 renderStartLeaderboard();
-animate();
+detectXR();
+renderer.setAnimationLoop(loop);
