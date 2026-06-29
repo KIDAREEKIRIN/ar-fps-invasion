@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>AR FPS — 침공</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <!-- 카메라 배경 -->
+  <video id="camera" playsinline autoplay muted></video>
+
+  <!-- 3D 캔버스는 JS에서 생성하여 #app에 붙임 -->
+  <div id="app"></div>
+
+  <!-- 화면 흔들림(셰이크)을 위한 뷰포트 래퍼 표시는 #camera/#app에 직접 적용 -->
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div class="hud-top">
+      <div class="hud-stat">
+        <span class="label">점수</span>
+        <span id="score">0</span>
+      </div>
+      <div class="hud-stat">
+        <span class="label">웨이브</span>
+        <span id="wave">1</span>
+      </div>
+      <div class="hud-stat">
+        <span class="label">처치</span>
+        <span id="kills">0</span>
+      </div>
+    </div>
+
+    <button id="pause-btn" aria-label="일시정지">⏸</button>
+    <button id="mute-btn" class="mute-btn" aria-label="음소거">🔊</button>
+    <button id="recalib-btn" class="recalib hidden" aria-label="정면 보정">🧭 정면</button>
+    <div id="fps">60 FPS</div>
+
+    <!-- 화면 밖 위협 방향 표시기 -->
+    <div id="indicators"></div>
+
+    <!-- 조준선 -->
+    <div id="crosshair">
+      <div class="ch-dot"></div>
+      <div class="ch-line top"></div>
+      <div class="ch-line bottom"></div>
+      <div class="ch-line left"></div>
+      <div class="ch-line right"></div>
+      <div id="hitmarker"></div>
+    </div>
+
+    <!-- 콤보 -->
+    <div id="combo" class="hidden"><span id="combo-x">x2</span><small>콤보</small></div>
+
+    <!-- 데미지/점수 팝업 -->
+    <div id="popups"></div>
+
+    <!-- 파워업 표시 -->
+    <div id="powerups"></div>
+
+    <!-- 피격 효과 -->
+    <div id="damage-vignette"></div>
+    <div id="lowhp-vignette"></div>
+
+    <div class="hud-bottom">
+      <div class="health-wrap">
+        <div class="health-icon">❤</div>
+        <div class="health-bar"><div id="health-fill"></div></div>
+      </div>
+      <div class="ammo-wrap">
+        <div id="ammo">12</div>
+        <div class="ammo-label">탄약</div>
+        <div id="reload-bar"><div></div></div>
+      </div>
+    </div>
+
+    <button id="fire-btn" aria-label="발사">발사</button>
+    <button id="reload-btn" aria-label="재장전">⟳</button>
+  </div>
+
+  <!-- 시작 화면 -->
+  <div id="start-screen">
+    <div class="panel">
+      <h1>AR FPS<span>침공</span></h1>
+      <p class="tagline">당신의 방이 전장이 된다.</p>
+      <ul class="howto">
+        <li>📷 카메라 영상이 배경이 됩니다</li>
+        <li>📱 휴대폰을 움직여(또는 마우스로) 조준</li>
+        <li>🎯 화면을 탭/클릭해서 발사</li>
+        <li>👾 정찰·돌격·포탑 드론을 막아내세요</li>
+        <li>⚡ 콤보를 이어 점수 배율을 올리세요</li>
+      </ul>
+      <div class="aim-select">
+        <span class="aim-label">조준 방식</span>
+        <div class="aim-seg">
+          <button data-mode="gyro">자이로<small>기기 기울여</small></button>
+          <button data-mode="touch">터치<small>드래그</small></button>
+        </div>
+      </div>
+      <div class="highscore-line">최고 점수 <span id="hi-start">0</span></div>
+      <button id="start-btn">게임 시작</button>
+      <button class="mute-btn panel-mute" aria-label="음소거">🔊</button>
+      <p id="permission-note"></p>
+    </div>
+  </div>
+
+  <!-- 일시정지 화면 -->
+  <div id="pause-screen" class="hidden">
+    <div class="panel">
+      <h1 class="pause-title">일시정지</h1>
+      <div class="aim-select">
+        <span class="aim-label">조준 방식</span>
+        <div class="aim-seg">
+          <button data-mode="gyro">자이로<small>기기 기울여</small></button>
+          <button data-mode="touch">터치<small>드래그</small></button>
+        </div>
+      </div>
+      <button id="recalib-btn2" class="recalib ghost">🧭 정면 보정</button>
+      <button class="mute-btn ghost" aria-label="음소거">🔊 소리</button>
+      <button id="resume-btn">계속하기</button>
+      <button id="quit-btn" class="ghost">그만두기</button>
+    </div>
+  </div>
+
+  <!-- 게임오버 화면 -->
+  <div id="gameover-screen" class="hidden">
+    <div class="panel">
+      <h1 class="go">격추됨</h1>
+      <div id="newrecord" class="hidden">🏆 신기록!</div>
+      <div class="final-stats">
+        <div><span id="final-score">0</span><small>점수</small></div>
+        <div><span id="final-wave">1</span><small>웨이브</small></div>
+        <div><span id="final-kills">0</span><small>처치</small></div>
+      </div>
+      <div class="highscore-line">최고 점수 <span id="hi-over">0</span></div>
+      <button id="restart-btn">다시 도전</button>
+    </div>
+  </div>
+
+  <script type="module" src="game.js"></script>
+</body>
+</html>

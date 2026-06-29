@@ -1,0 +1,18 @@
+{
+  "name": "AR FPS — 침공",
+  "short_name": "AR FPS",
+  "description": "카메라 영상을 배경으로 드론을 격추하는 웹 AR FPS 게임",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "start_url": "./index.html",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
