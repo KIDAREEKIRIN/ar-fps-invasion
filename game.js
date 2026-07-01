@@ -81,9 +81,9 @@ const ENEMY_TYPES = {
   scout:  { hp: 1, speed: 3.0, speedCap: 4.6, scale: 0.65, geo: "scout",  color: 0x2bf5c8, emissive: 0x0a4a3c, damage: 7,  score: 110, ranged: false },
   drone:  { hp: 1, speed: 1.9, speedCap: 4.0, scale: 1.0,  geo: "drone",  color: 0xff3b5c, emissive: 0x550010, damage: 12, score: 100, ranged: false },
   brute:  { hp: 3, speed: 1.1, speedCap: 2.4, scale: 1.6,  geo: "brute",  color: 0xff7a1a, emissive: 0x5a2400, damage: 22, score: 280, ranged: false },
-  turret: { hp: 2, speed: 1.4, speedCap: 2.4, scale: 1.05, geo: "turret", color: 0xb14dff, emissive: 0x3a0a5a, damage: 16, score: 220, ranged: true, range: 7.5, fireCD: 2.2, projDamage: 10, maxShots: 5 },
+  turret: { hp: 2, speed: 1.4, speedCap: 2.4, scale: 1.05, geo: "turret", color: 0xb14dff, emissive: 0x3a0a5a, damage: 13, score: 220, ranged: true, range: 7.5, fireCD: 2.4, projDamage: 9, maxShots: 5 },
   splitter:{ hp: 2, speed: 1.7, speedCap: 3.0, scale: 1.1, geo: "drone", color: 0x9bff3b, emissive: 0x2a5500, damage: 12, score: 160, ranged: false, splits: 2 },
-  shield: { hp: 4, speed: 1.2, speedCap: 2.3, scale: 1.2, geo: "turret", color: 0x4db5ff, emissive: 0x0a2a4a, damage: 16, score: 240, ranged: false, shielded: true },
+  shield: { hp: 3, speed: 1.2, speedCap: 2.3, scale: 1.2, geo: "turret", color: 0x4db5ff, emissive: 0x0a2a4a, damage: 12, score: 240, ranged: false, shielded: true },
   boss:   { hp: 26, speed: 0.7, speedCap: 1.3, scale: 2.6, geo: "brute", color: 0xffd23b, emissive: 0x5a4000, damage: 34, score: 1500, ranged: true, range: 9.5, fireCD: 1.1, projDamage: 12, maxShots: 9999, boss: true, pellets: 5 },
 };
 
@@ -614,7 +614,7 @@ function updateIndicators() {
   }
   offs.sort((a, b) => a.d - b.d);
   const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
-  const r = Math.min(window.innerWidth, window.innerHeight) / 2 - 46;
+  const r = Math.min(window.innerWidth, window.innerHeight) / 2 - 56;
   for (let i = 0; i < INDICATOR_COUNT; i++) {
     const el = indicatorEls[i];
     if (i < offs.length) {
@@ -623,7 +623,7 @@ function updateIndicators() {
       if (!offs[i].front) { _cs.x = -_cs.x; _cs.y = -_cs.y; } // 뒤쪽이면 반전
       const ang = Math.atan2(_cs.x, _cs.y);
       const ix = cx + Math.sin(ang) * r, iy = cy - Math.cos(ang) * r;
-      el.style.transform = `translate(${(ix - 12).toFixed(0)}px,${(iy - 12).toFixed(0)}px) rotate(${ang}rad)`;
+      el.style.transform = `translate(${(ix - 20).toFixed(0)}px,${(iy - 20).toFixed(0)}px) rotate(${ang}rad)`;
       el.style.color = "#" + en.cfg.color.toString(16).padStart(6, "0");
       el.classList.remove("hidden");
     } else {
@@ -907,12 +907,14 @@ function castShot(nx, ny) {
 function hitEnemy(en, hitPoint) {
   // 약점(코어) 명중 = 치명타 (조준 실력 보상). critRadius 강화로 범위 확대
   const crit = !!(hitPoint && hitPoint.distanceTo(en.group.position) < game.critRadius * en.scale);
-  // 방패병: 약점 명중이 아니면 피해 차단
+  // 방패병: 약점(코어)이 아니면 피해 감소(완전 차단 X) — 조준이 어려워도 잡을 수 있게
   if (en.cfg.shielded && !crit) {
+    en.hp -= game.dmg * 0.4;
     sfx.block();
     en.body.material.emissiveIntensity = enemyGlow + 0.6;
     const sb = worldToScreen(en.group.position);
-    showPopup("방어!", sb.x, sb.y, "");
+    if (en.hp <= 0) { destroyEnemy(en, false, false); return; }
+    showPopup("방어", sb.x, sb.y, "");
     return;
   }
   en.hp -= crit ? game.dmg * game.critMult : game.dmg;
