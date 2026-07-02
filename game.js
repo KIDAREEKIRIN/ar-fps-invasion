@@ -798,9 +798,15 @@ function collectPickup(pk) {
     showPopup("+25 HP", window.innerWidth / 2, window.innerHeight / 2 - 60, "heal");
   } else {
     game.overdrive = 6;
-    showPopup("오버드라이브!", window.innerWidth / 2, window.innerHeight / 2 - 60, "");
+    showCenterText("⚡ 무한연사!", "#ffcf3b", true);
+    odFlash(); vibrate([30, 20, 40]); addShake(6);
     updateOverdriveUI();
   }
+}
+function odFlash() {
+  const f = document.getElementById("od-flash");
+  if (!f) return;
+  f.classList.remove("go"); void f.offsetWidth; f.classList.add("go");
 }
 
 /* =========================================================
@@ -1038,11 +1044,15 @@ function updateComboUI() {
 }
 function updateOverdriveUI() {
   powerupsEl.innerHTML = "";
-  ui.fireBtn.classList.toggle("overdrive", game.overdrive > 0);
-  if (game.overdrive > 0) {
+  const on = game.overdrive > 0;
+  ui.fireBtn.classList.toggle("overdrive", on);
+  ui.ammo.classList.toggle("od", on);
+  const glow = document.getElementById("od-glow");
+  if (glow) glow.classList.toggle("on", on);
+  if (on) {
     const el = document.createElement("div");
-    el.className = "pwr";
-    el.textContent = "⚡ 오버드라이브 " + Math.ceil(game.overdrive) + "s";
+    el.className = "pwr od-pwr";
+    el.textContent = "⚡ 무한연사 " + Math.ceil(game.overdrive) + "s";
     powerupsEl.appendChild(el);
   }
   updateAmmo();
@@ -1147,16 +1157,22 @@ function startWave(n) {
     showCenterText(zoneChanged ? ("웨이브 " + n + " · " + THEMES[ti].name) : ("웨이브 " + n));
   }
 }
-function showCenterText(text) {
+function showCenterText(text, color, big) {
   let el = document.getElementById("center-text");
   if (!el) {
     el = document.createElement("div");
     el.id = "center-text";
-    el.style.cssText = "position:fixed;top:34%;left:0;right:0;text-align:center;z-index:6;font-size:34px;font-weight:900;letter-spacing:4px;color:#2bf5c8;text-shadow:0 0 20px rgba(43,245,200,.7);pointer-events:none;transition:opacity .5s;";
+    el.style.cssText = "position:fixed;top:34%;left:0;right:0;text-align:center;z-index:6;font-weight:900;letter-spacing:4px;pointer-events:none;transition:opacity .5s;";
     document.body.appendChild(el);
   }
+  const c = color || "#2bf5c8";
+  el.style.color = c;
+  el.style.fontSize = (big ? 52 : 34) + "px";
+  el.style.textShadow = "0 0 24px " + c + ", 0 0 8px " + c;
   el.textContent = text;
   el.style.opacity = "1";
+  el.style.transform = "scale(1)";
+  if (big) { el.style.transform = "scale(1.25)"; requestAnimationFrame(() => { el.style.transition = "opacity .5s, transform .25s"; el.style.transform = "scale(1)"; }); }
   clearTimeout(el._t);
   el._t = setTimeout(() => { el.style.opacity = "0"; }, 1400);
 }
@@ -1215,11 +1231,15 @@ function update(dt) {
     // 오버드라이브 타이머 + 자동연사
     if (game.overdrive > 0) {
       game.overdrive -= dt;
-      if (game.overdrive <= 0) { game.overdrive = 0; updateOverdriveUI(); if (game.ammo <= 0) reload(); }
-      fire(); // 누르지 않아도 연사 (쿨다운으로 제한)
-      // UI 갱신(가벼움)
-      const pwr = powerupsEl.firstElementChild;
-      if (pwr) pwr.textContent = "⚡ 오버드라이브 " + Math.ceil(game.overdrive) + "s";
+      if (game.overdrive <= 0) {
+        game.overdrive = 0; updateOverdriveUI(); if (game.ammo <= 0) reload();
+      } else {
+        fire(); // 누르지 않아도 연사 (쿨다운으로 제한)
+        const sec = Math.ceil(game.overdrive);
+        const pwr = powerupsEl.firstElementChild;
+        if (pwr) pwr.textContent = "⚡ 무한연사 " + sec + "s";
+        ui.ammo.textContent = "∞ " + sec + "s"; // ∞ 옆 남은 초 카운트다운
+      }
     }
 
     // 자동연사 무기(기관단총): 누르고 있으면 연사 (쿨다운 제한)
